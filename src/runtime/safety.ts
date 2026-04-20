@@ -7,7 +7,7 @@ export interface SafetyCheckResult {
   violations: string[];
 }
 
-const CORE_IDENTITY_FIELDS = ['name', 'identity', 'background', 'personality'];
+const CORE_IDENTITY_FIELDS = ['name', 'identity'];
 
 const RATE_LIMITS: Record<string, number> = {
   post: 10,
