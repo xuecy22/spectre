@@ -6,10 +6,12 @@ import {
   loadStrategy,
   loadLearnings,
   loadLastWake,
+  loadPromptConfig,
+  loadScheduleConfig,
   assembleSystemPrompt,
 } from './prompt-builder';
 import { writeLastWake, findWakeLogByTimestamp, archiveSession } from './memory';
-import { checkPersonaIntegrity } from './safety';
+import { checkPersonaIntegrity, snapshotPersona, autoHeal } from './safety';
 import { saveWakeRecord } from './db';
 import { lastWakeSchema, type LastWakeOutput } from './prompts/output-schema';
 import { join } from 'node:path';
@@ -51,6 +53,12 @@ async function prepare(): Promise<PromptContext> {
   const strategy = loadStrategy();
   const learnings = loadLearnings();
   const lastWake = loadLastWake();
+  const promptConfig = loadPromptConfig();
+  const scheduleConfig = loadScheduleConfig();
+
+  // PRD 3.2: Snapshot persona core identity for integrity check in CLEANUP
+  const personaPath = join(process.cwd(), 'memory', 'persona.md');
+  const personaSnapshot = snapshotPersona(personaPath);
 
   return {
     wakeId,
@@ -58,8 +66,11 @@ async function prepare(): Promise<PromptContext> {
     persona: persona ?? undefined,
     strategy: strategy ?? undefined,
     learnings: learnings ?? undefined,
+    promptConfig: promptConfig ?? undefined,
+    scheduleConfig: scheduleConfig ?? undefined,
     lastWake,
     timeOfDay: getTimeOfDay(timestamp.getHours()),
+    personaSnapshot,
   };
 }
 
@@ -156,7 +167,7 @@ async function cleanup(context: PromptContext, result: SessionResult): Promise<v
 
   // Check persona integrity
   const personaPath = join(process.cwd(), 'memory', 'persona.md');
-  const integrityCheck = checkPersonaIntegrity(personaPath);
+  const integrityCheck = checkPersonaIntegrity(personaPath, context.personaSnapshot);
   if (!integrityCheck.passed) {
     console.warn(`Persona integrity violations: ${integrityCheck.violations.join(', ')}`);
   }
@@ -167,7 +178,14 @@ async function cleanup(context: PromptContext, result: SessionResult): Promise<v
       const diff = gitDiffStat();
       if (diff) {
         gitAddAll();
-        gitCommit(`wake: ${wakeId}\n\nwakeId: ${wakeId}`);
+
+        // Build commit message with actual action summary
+        const actionLines = (structuredOutput?.actions ?? [])
+          .map((a) => `- ${a.type}: ${a.summary}`)
+          .join('\n');
+        const summary = actionLines || 'no actions taken';
+        gitCommit(`wake: ${wakeId}\n\n${summary}\n\nwakeId: ${wakeId}`);
+
         markAsGoodCommit();
       }
     } catch {
@@ -215,6 +233,16 @@ export async function runWakeCycle(): Promise<void> {
       lastError = err instanceof Error ? err : new Error(String(err));
 
       if (attempt < MAX_RETRIES) {
+        // Self-healing (PRD 8.3): check if agent broke infrastructure code
+        if (process.env.MOCK_MODE !== 'true') {
+          const revertedFiles = autoHeal();
+          if (revertedFiles.length > 0) {
+            console.warn(
+              `Auto-heal: reverted infrastructure files: ${revertedFiles.join(', ')}`,
+            );
+          }
+        }
+
         console.warn(`Wake cycle attempt ${attempt + 1} failed, retrying: ${lastError.message}`);
         continue;
       }

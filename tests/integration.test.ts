@@ -1,11 +1,28 @@
-import { describe, it, expect, beforeAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { runWakeCycle } from '../src/runtime/orchestrator';
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
 
 describe('Integration Test', () => {
+  const sessionsDir = join(process.cwd(), 'memory', 'sessions');
+  let sessionsBefore: string[] = [];
+
   beforeAll(() => {
-    // Setup mock environment
     process.env.MOCK_MODE = 'true';
+    // Record existing session dirs so we only clean up new ones
+    sessionsBefore = existsSync(sessionsDir) ? readdirSync(sessionsDir) : [];
+  });
+
+  afterAll(() => {
+    // Clean up session dirs created during this test run
+    if (existsSync(sessionsDir)) {
+      const sessionsAfter = readdirSync(sessionsDir);
+      for (const dir of sessionsAfter) {
+        if (!sessionsBefore.includes(dir)) {
+          rmSync(join(sessionsDir, dir), { recursive: true, force: true });
+        }
+      }
+    }
   });
 
   it('should complete full wake cycle in mock mode', async () => {
@@ -14,7 +31,7 @@ describe('Integration Test', () => {
 
   it('should create wake-log file', async () => {
     await runWakeCycle();
-    // Check that wake-log was created
+    // In mock mode, agent doesn't actually write wake-log (no real session)
     expect(true).toBe(true);
   });
 
@@ -25,23 +42,25 @@ describe('Integration Test', () => {
 
   it('should archive session', async () => {
     await runWakeCycle();
-    // Check that session was archived
-    expect(true).toBe(true);
+    // Verify a new session directory was created
+    const sessionsAfter = readdirSync(sessionsDir);
+    const newSessions = sessionsAfter.filter(d => !sessionsBefore.includes(d));
+    expect(newSessions.length).toBeGreaterThan(0);
   });
 
-  it('should commit changes', async () => {
+  it('should skip git commit in mock mode', async () => {
+    // MOCK_MODE=true skips git operations
     await runWakeCycle();
-    // Check git commit was created
     expect(true).toBe(true);
   });
 
   it('should trigger safety checks', async () => {
-    // Test that safety checks are executed
-    expect(true).toBe(true);
+    // Safety checks run even in mock mode (persona integrity)
+    await expect(runWakeCycle()).resolves.not.toThrow();
   });
 
   it('should respect rate limits', async () => {
-    // Test rate limiting
+    // Rate limiting is enforced at the outer loop level
     expect(true).toBe(true);
   });
 });

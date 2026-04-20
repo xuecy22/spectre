@@ -1,17 +1,22 @@
 import { runWakeCycle } from './orchestrator';
 import { startScheduler, type ScheduleConfig } from './scheduler';
 import { config } from 'dotenv';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { initDB, getRecentWakes, getRecentPosts, getEngagementSummary, getTotalCost } from './db';
+import { loadLastWake } from './prompt-builder';
 
 interface CliOptions {
   mock?: boolean;
+  command?: string;
 }
 
 function parseArgs(): CliOptions {
   const args = process.argv.slice(2);
+  const command = args.find(a => !a.startsWith('--'));
   return {
     mock: args.includes('--mock'),
+    command,
   };
 }
 
@@ -40,11 +45,143 @@ function getScheduleConfig(): ScheduleConfig {
   };
 }
 
+// --- Subcommands (PRD 9.2) ---
+
+function cmdStatus(): void {
+  const lastWake = loadLastWake();
+  console.log('=== Spectre Status ===\n');
+
+  if (lastWake) {
+    console.log(`Last wake: ${lastWake.wakeId ?? 'unknown'}`);
+    console.log(`Timestamp: ${lastWake.timestamp ?? 'unknown'}`);
+    console.log(`Time of day: ${lastWake.timeOfDay ?? 'unknown'}`);
+    const actions = lastWake.actions as Array<{ type: string; summary: string }> | undefined;
+    if (actions && actions.length > 0) {
+      console.log(`Actions: ${actions.map(a => `${a.type}: ${a.summary}`).join(', ')}`);
+    } else {
+      console.log('Actions: none');
+    }
+    console.log(`Pending: ${lastWake.pendingItems || 'none'}`);
+  } else {
+    console.log('No wake cycle has run yet.');
+  }
+
+  // Check pause state
+  const pauseFile = join(process.cwd(), 'data', '.paused');
+  if (existsSync(pauseFile)) {
+    console.log('\nState: PAUSED');
+  } else {
+    console.log('\nState: RUNNING');
+  }
+}
+
+function cmdMetrics(): void {
+  try {
+    initDB();
+    const summary = getEngagementSummary(7);
+    const cost = getTotalCost(30);
+
+    console.log('=== Engagement Metrics (7 days) ===\n');
+    console.log(`Total posts: ${summary.totalPosts}`);
+    console.log(`Avg likes: ${summary.avgLikes}`);
+    console.log(`Avg replies: ${summary.avgReplies}`);
+    console.log(`Avg retweets: ${summary.avgRetweets}`);
+    console.log(`Follower delta: ${summary.totalFollowerDelta > 0 ? '+' : ''}${summary.totalFollowerDelta}`);
+    console.log(`\nAPI cost (30 days): $${cost}`);
+  } catch (err) {
+    console.error('Failed to load metrics:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+function cmdHistory(limit = 10): void {
+  try {
+    initDB();
+    const posts = getRecentPosts(limit);
+
+    console.log(`=== Recent Posts (${posts.length}) ===\n`);
+    if (posts.length === 0) {
+      console.log('No posts recorded yet.');
+      return;
+    }
+    for (const post of posts) {
+      const preview = post.content.length > 60 ? post.content.slice(0, 60) + '...' : post.content;
+      console.log(`[${post.postedAt}] ${post.type}: ${preview}`);
+    }
+  } catch (err) {
+    console.error('Failed to load history:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+function cmdLogs(limit = 10): void {
+  try {
+    initDB();
+    const wakes = getRecentWakes(limit);
+
+    console.log(`=== Recent Wake Cycles (${wakes.length}) ===\n`);
+    if (wakes.length === 0) {
+      console.log('No wake cycles recorded yet.');
+      return;
+    }
+    for (const wake of wakes) {
+      const actions = wake.actions?.join(', ') || 'none';
+      console.log(`[${wake.timestamp}] ${wake.wakeId} (${wake.turns} turns, $${wake.cost?.toFixed(3)})`);
+      console.log(`  Actions: ${actions}`);
+    }
+  } catch (err) {
+    console.error('Failed to load logs:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+function cmdPause(): void {
+  const pauseFile = join(process.cwd(), 'data', '.paused');
+  mkdirSync(join(process.cwd(), 'data'), { recursive: true });
+  writeFileSync(pauseFile, new Date().toISOString());
+  console.log('Spectre paused. Run "spectre resume" to resume.');
+}
+
+function cmdResume(): void {
+  const pauseFile = join(process.cwd(), 'data', '.paused');
+  if (existsSync(pauseFile)) {
+    unlinkSync(pauseFile);
+    console.log('Spectre resumed.');
+  } else {
+    console.log('Spectre is not paused.');
+  }
+}
+
+function isPaused(): boolean {
+  return existsSync(join(process.cwd(), 'data', '.paused'));
+}
+
+// --- Main entry point ---
+
 export async function main(): Promise<void> {
   const options = parseArgs();
 
   // Load environment variables
   loadEnv();
+
+  // Handle subcommands (PRD 9.2)
+  switch (options.command) {
+    case 'status':
+      cmdStatus();
+      return;
+    case 'metrics':
+      cmdMetrics();
+      return;
+    case 'history':
+      cmdHistory();
+      return;
+    case 'logs':
+      cmdLogs();
+      return;
+    case 'pause':
+      cmdPause();
+      return;
+    case 'resume':
+      cmdResume();
+      return;
+  }
 
   console.log('Spectre starting...');
   if (options.mock) {
@@ -57,6 +194,10 @@ export async function main(): Promise<void> {
   // Start scheduler
   console.log(`Starting scheduler (timezone: ${scheduleConfig.timezone})`);
   startScheduler(scheduleConfig, async () => {
+    if (isPaused()) {
+      console.log('Wake cycle skipped (paused)');
+      return;
+    }
     console.log('Wake cycle triggered');
     try {
       await runWakeCycle();

@@ -53,6 +53,33 @@ export function markAsGoodCommit(): void {
   writeFileSync(GOOD_COMMIT_FILE, hash);
 }
 
+/**
+ * 获取从 baseCommit 到 HEAD 之间变更的文件列表
+ * 用于自愈机制检测 agent 修改了哪些基础设施文件
+ */
+export function gitDiffFilesSince(baseCommit: string): string[] {
+  try {
+    const output = git(`diff --name-only ${baseCommit} HEAD`);
+    return output ? output.split('\n') : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * 将指定文件恢复到 baseCommit 时的状态（适用于已 commit 的变更）
+ * 通过 checkout 指定 commit 的文件版本，然后 commit 回滚
+ */
+export function gitRestoreFilesFrom(files: string[], baseCommit: string): void {
+  if (files.length === 0) return;
+  git(`checkout ${baseCommit} -- ${files.join(' ')}`);
+  gitAddAll();
+  gitCommit(`auto-heal: revert infrastructure files to ${baseCommit.slice(0, 7)}`);
+}
+
+/**
+ * 回滚未提交的文件变更（工作区 + 暂存区）
+ */
 export function gitRevertFiles(files: string[]): void {
   if (files.length === 0) return;
   git(`checkout -- ${files.join(' ')}`);

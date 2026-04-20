@@ -10,8 +10,11 @@ export interface PromptContext {
   persona?: string;
   strategy?: string;
   learnings?: string;
+  promptConfig?: string;
+  scheduleConfig?: string;
   metrics?: Record<string, unknown>;
   timeOfDay?: string;
+  personaSnapshot?: Record<string, string> | null;
 }
 
 export function loadPersona(): string | null {
@@ -28,6 +31,18 @@ export function loadStrategy(): string | null {
 
 export function loadLearnings(): string | null {
   const path = join(process.cwd(), 'memory', 'learnings.md');
+  if (!existsSync(path)) return null;
+  return readFileSync(path, 'utf-8');
+}
+
+export function loadPromptConfig(): string | null {
+  const path = join(process.cwd(), 'memory', 'prompt_config.md');
+  if (!existsSync(path)) return null;
+  return readFileSync(path, 'utf-8');
+}
+
+export function loadScheduleConfig(): string | null {
+  const path = join(process.cwd(), 'memory', 'schedule_config.md');
   if (!existsSync(path)) return null;
   return readFileSync(path, 'utf-8');
 }
@@ -69,6 +84,14 @@ export function assembleSystemPrompt(context: PromptContext): string {
 
   if (context.learnings) {
     prompt += `\n## 经验洞察\n\n${context.learnings}\n`;
+  }
+
+  if (context.promptConfig) {
+    prompt += `\n## Prompt 配置\n\n${context.promptConfig}\n`;
+  }
+
+  if (context.scheduleConfig) {
+    prompt += `\n## 调度配置\n\n${context.scheduleConfig}\n`;
   }
 
   return prompt;
