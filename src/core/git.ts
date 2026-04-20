@@ -14,7 +14,15 @@ export function gitAddAll(): void {
 }
 
 export function gitCommit(message: string): void {
-  git(`commit -m "${message.replace(/"/g, '\\"')}"`);
+  try {
+    git(`commit -m "${message.replace(/"/g, '\\"')}"`);
+  } catch (err: any) {
+    // "nothing to commit" is not an error — CC session may have already committed
+    if (err.stdout?.includes('nothing to commit') || err.stderr?.includes('nothing to commit')) {
+      return;
+    }
+    throw err;
+  }
 }
 
 export function gitDiffStat(): string {
