@@ -25,19 +25,12 @@ export function checkPersonaIntegrity(personaPath: string): SafetyCheckResult {
   const violations: string[] = [];
 
   for (const field of CORE_IDENTITY_FIELDS) {
-    const pattern = new RegExp(`^${field}:\\s*`, 'm');
-    if (!pattern.test(content)) {
+    // Match both YAML-style (name: value) and markdown-style (- **Name**: value)
+    const yamlPattern = new RegExp(`^${field}:\\s*`, 'mi');
+    const mdPattern = new RegExp(`\\*\\*${field}\\*\\*`, 'i');
+    if (!yamlPattern.test(content) && !mdPattern.test(content)) {
       violations.push(`Missing core identity field: ${field}`);
     }
-  }
-
-  // If the file has at least name and identity, consider it valid
-  // (background and personality may be in different formats)
-  const hasName = /^name:\s*.+/m.test(content);
-  const hasIdentity = /^identity:\s*.+/m.test(content);
-
-  if (hasName && hasIdentity) {
-    return { passed: true, violations: [] };
   }
 
   return {
