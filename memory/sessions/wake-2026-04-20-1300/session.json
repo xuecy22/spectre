@@ -1,0 +1,9 @@
+{
+  "wakeId": "wake-2026-04-20-1300",
+  "messages": [
+    {
+      "role": "assistant",
+      "content": "Test"
+    }
+  ]
+}

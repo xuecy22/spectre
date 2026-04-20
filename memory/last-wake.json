@@ -1,0 +1,10 @@
+{
+  "wakeId": "wake-2026-04-20-1200",
+  "timestamp": "2026-04-20T12:00:00Z",
+  "actions": [
+    {
+      "type": "post",
+      "summary": "Posted sketch"
+    }
+  ]
+}
