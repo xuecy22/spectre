@@ -115,29 +115,33 @@ async function cleanup(context: PromptContext, result: SessionResult): Promise<v
   }
 
   // Git commit all changes
-  try {
-    const diff = gitDiffStat();
-    if (diff) {
-      gitAddAll();
-      gitCommit(`wake: ${wakeId}\n\nwakeId: ${wakeId}`);
-      markAsGoodCommit();
+  if (process.env.MOCK_MODE !== 'true') {
+    try {
+      const diff = gitDiffStat();
+      if (diff) {
+        gitAddAll();
+        gitCommit(`wake: ${wakeId}\n\nwakeId: ${wakeId}`);
+        markAsGoodCommit();
+      }
+    } catch {
+      // Git operations are best-effort; don't fail the wake cycle
     }
-  } catch {
-    // Git operations are best-effort; don't fail the wake cycle
   }
 
   // Save wake record to DB
-  try {
-    saveWakeRecord({
-      wakeId,
-      timestamp: context.timestamp.toISOString(),
-      duration: result.turns,
-      cost: result.cost,
-      turns: result.turns,
-      actions: [],
-    });
-  } catch {
-    // DB write is best-effort
+  if (process.env.MOCK_MODE !== 'true') {
+    try {
+      saveWakeRecord({
+        wakeId,
+        timestamp: context.timestamp.toISOString(),
+        duration: result.turns,
+        cost: result.cost,
+        turns: result.turns,
+        actions: [],
+      });
+    } catch {
+      // DB write is best-effort
+    }
   }
 }
 

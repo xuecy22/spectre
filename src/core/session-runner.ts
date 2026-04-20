@@ -22,6 +22,26 @@ const DEFAULT_ALLOWED_TOOLS = [
 ];
 
 export async function runSession(options: SessionOptions): Promise<SessionResult> {
+  // Mock mode for testing
+  if (process.env.MOCK_MODE === 'true') {
+    return {
+      success: true,
+      output: 'Mock session completed successfully',
+      messages: [
+        {
+          type: 'result',
+          subtype: 'success',
+          result: 'Mock session completed successfully',
+          is_error: false,
+          total_cost_usd: 0.05,
+          num_turns: 3,
+        } as SDKMessage,
+      ],
+      cost: 0.05,
+      turns: 3,
+    };
+  }
+
   const queryOptions: Options = {
     maxTurns: options.maxTurns ?? 30,
     allowedTools: options.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
