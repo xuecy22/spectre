@@ -1,4 +1,4 @@
-import { query, type QueryOptions, type QueryResult } from '@anthropic-ai/claude-agent-sdk';
+import { query, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 
 export interface SessionOptions {
   prompt: string;
@@ -11,7 +11,10 @@ export interface SessionOptions {
 export interface SessionResult {
   success: boolean;
   output: string;
+  messages: SDKMessage[];
   error?: string;
+  cost?: number;
+  turns?: number;
 }
 
 const DEFAULT_ALLOWED_TOOLS = [
@@ -19,42 +22,55 @@ const DEFAULT_ALLOWED_TOOLS = [
 ];
 
 export async function runSession(options: SessionOptions): Promise<SessionResult> {
-  const queryOptions: QueryOptions = {
-    prompt: options.prompt,
-    options: {
-      maxTurns: options.maxTurns ?? 30,
-      allowedTools: options.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
-      permissionMode: 'acceptEdits',
-    },
+  const queryOptions: Options = {
+    maxTurns: options.maxTurns ?? 30,
+    allowedTools: options.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
+    permissionMode: 'acceptEdits' as const,
   };
 
   if (options.workingDirectory) {
-    queryOptions.options!.cwd = options.workingDirectory;
+    queryOptions.cwd = options.workingDirectory;
   }
 
   if (options.systemPrompt) {
-    queryOptions.options!.systemPrompt = options.systemPrompt;
+    queryOptions.systemPrompt = options.systemPrompt;
   }
 
   try {
-    const result: QueryResult = await query(queryOptions);
-    const output = extractOutput(result);
-    return { success: true, output };
+    const messages: SDKMessage[] = [];
+    const stream = query({ prompt: options.prompt, options: queryOptions });
+
+    for await (const message of stream) {
+      messages.push(message);
+    }
+
+    // Find the result message
+    const resultMsg = messages.find(
+      (m): m is Extract<SDKMessage, { type: 'result' }> => m.type === 'result'
+    );
+
+    if (resultMsg && 'subtype' in resultMsg && resultMsg.subtype === 'success') {
+      return {
+        success: true,
+        output: resultMsg.result,
+        messages,
+        cost: resultMsg.total_cost_usd,
+        turns: resultMsg.num_turns,
+      };
+    }
+
+    if (resultMsg && resultMsg.is_error) {
+      return {
+        success: false,
+        output: '',
+        messages,
+        error: `Session ended with ${resultMsg.subtype}`,
+      };
+    }
+
+    return { success: true, output: '', messages };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
-    return { success: false, output: '', error: message };
+    return { success: false, output: '', messages: [], error: message };
   }
-}
-
-function extractOutput(result: QueryResult): string {
-  if (!result.messages || result.messages.length === 0) return '';
-  const lastMessage = result.messages[result.messages.length - 1];
-  if (typeof lastMessage.content === 'string') return lastMessage.content;
-  if (Array.isArray(lastMessage.content)) {
-    return lastMessage.content
-      .filter((block: any) => block.type === 'text')
-      .map((block: any) => block.text)
-      .join('\n');
-  }
-  return '';
 }
