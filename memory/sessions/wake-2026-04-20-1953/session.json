@@ -1,0 +1,25 @@
+{
+  "wakeId": "wake-2026-04-20-1953",
+  "messages": [
+    {
+      "type": "result",
+      "subtype": "success",
+      "result": "Mock session completed successfully",
+      "is_error": false,
+      "total_cost_usd": 0.05,
+      "num_turns": 3,
+      "structured_output": {
+        "timestamp": "2026-04-20T11:53:01.502Z",
+        "timeOfDay": "morning",
+        "actions": [],
+        "observations": "Mock session",
+        "memoryUpdates": [],
+        "pendingItems": "",
+        "metrics": {
+          "newFollowers": 0,
+          "totalFollowers": 0
+        }
+      }
+    }
+  ]
+}

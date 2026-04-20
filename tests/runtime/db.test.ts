@@ -1,5 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { initDB, saveWakeRecord, getRecentWakes, getTotalCost, type WakeRecord } from '../../src/runtime/db';
+import {
+  initDB,
+  saveWakeRecord, getRecentWakes, getTotalCost,
+  savePost, getRecentPosts,
+  saveMetrics, getMetricsForPost, getEngagementSummary,
+  saveInteraction, getRecentInteractions,
+  type WakeRecord, type PostRecord, type MetricsRecord, type InteractionRecord,
+} from '../../src/runtime/db';
 import { unlinkSync, existsSync } from 'node:fs';
 
 describe('DB', () => {
@@ -12,11 +19,13 @@ describe('DB', () => {
     initDB();
   });
 
-  it('should initialize database', () => {
+  it('should initialize database with all tables', () => {
     expect(existsSync(testDbPath)).toBe(true);
   });
 
-  it('should save wake record', () => {
+  // --- Wakes ---
+
+  it('should save and retrieve wake record', () => {
     const record: WakeRecord = {
       wakeId: 'wake-2026-04-20-1200',
       timestamp: '2026-04-20T12:00:00Z',
@@ -35,27 +44,111 @@ describe('DB', () => {
 
   it('should calculate total cost', () => {
     const records: WakeRecord[] = [
-      {
-        wakeId: 'wake-1',
-        timestamp: new Date().toISOString(),
-        duration: 30000,
-        cost: 0.10,
-        turns: 5,
-        actions: ['post'],
-      },
-      {
-        wakeId: 'wake-2',
-        timestamp: new Date().toISOString(),
-        duration: 40000,
-        cost: 0.20,
-        turns: 7,
-        actions: ['reply'],
-      },
+      { wakeId: 'wake-1', timestamp: new Date().toISOString(), cost: 0.10, actions: [] },
+      { wakeId: 'wake-2', timestamp: new Date().toISOString(), cost: 0.20, actions: [] },
     ];
 
     records.forEach(saveWakeRecord);
     const total = getTotalCost(1);
 
     expect(total).toBe(0.30);
+  });
+
+  // --- Posts ---
+
+  it('should save and retrieve posts', () => {
+    saveWakeRecord({ wakeId: 'wake-1', timestamp: new Date().toISOString() });
+
+    const post: PostRecord = {
+      postId: 'tweet-123',
+      wakeId: 'wake-1',
+      type: 'original',
+      content: 'A sketch of Shibuya at night',
+      contentCategory: 'architecture',
+      hasImage: true,
+      postedAt: new Date().toISOString(),
+    };
+
+    savePost(post);
+    const posts = getRecentPosts(1);
+
+    expect(posts).toHaveLength(1);
+    expect(posts[0].postId).toBe('tweet-123');
+    expect(posts[0].type).toBe('original');
+    expect(posts[0].hasImage).toBe(true);
+    expect(posts[0].contentCategory).toBe('architecture');
+  });
+
+  // --- Metrics ---
+
+  it('should save and retrieve metrics', () => {
+    saveWakeRecord({ wakeId: 'wake-1', timestamp: new Date().toISOString() });
+    savePost({
+      postId: 'tweet-123', wakeId: 'wake-1', type: 'original',
+      content: 'test', hasImage: false, postedAt: new Date().toISOString(),
+    });
+
+    const metrics: MetricsRecord = {
+      postId: 'tweet-123',
+      likes: 42,
+      retweets: 5,
+      replies: 3,
+      impressions: 1200,
+      profileVisits: 15,
+      followerDelta: 7,
+      measuredAt: new Date().toISOString(),
+    };
+
+    saveMetrics(metrics);
+    const result = getMetricsForPost('tweet-123');
+
+    expect(result).not.toBeNull();
+    expect(result!.likes).toBe(42);
+    expect(result!.followerDelta).toBe(7);
+  });
+
+  it('should compute engagement summary', () => {
+    saveWakeRecord({ wakeId: 'wake-1', timestamp: new Date().toISOString() });
+
+    savePost({
+      postId: 'p1', wakeId: 'wake-1', type: 'original',
+      content: 'test', hasImage: false, postedAt: new Date().toISOString(),
+    });
+    savePost({
+      postId: 'p2', wakeId: 'wake-1', type: 'quote',
+      content: 'nice', hasImage: false, postedAt: new Date().toISOString(),
+    });
+
+    saveMetrics({ postId: 'p1', likes: 10, retweets: 2, replies: 4, impressions: 500, profileVisits: 5, followerDelta: 3, measuredAt: new Date().toISOString() });
+    saveMetrics({ postId: 'p2', likes: 20, retweets: 4, replies: 6, impressions: 800, profileVisits: 10, followerDelta: 5, measuredAt: new Date().toISOString() });
+
+    const summary = getEngagementSummary(1);
+
+    expect(summary.totalPosts).toBe(2);
+    expect(summary.avgLikes).toBe(15);
+    expect(summary.avgReplies).toBe(5);
+    expect(summary.totalFollowerDelta).toBe(8);
+  });
+
+  // --- Interactions ---
+
+  it('should save and retrieve interactions', () => {
+    saveWakeRecord({ wakeId: 'wake-1', timestamp: new Date().toISOString() });
+
+    const interaction: InteractionRecord = {
+      wakeId: 'wake-1',
+      type: 'quote',
+      postId: 'tweet-456',
+      targetUser: '@design_weekly',
+      content: 'Great composition analysis',
+      timestamp: new Date().toISOString(),
+    };
+
+    saveInteraction(interaction);
+    const recent = getRecentInteractions(1);
+
+    expect(recent).toHaveLength(1);
+    expect(recent[0].targetUser).toBe('@design_weekly');
+    expect(recent[0].type).toBe('quote');
   });
 });

@@ -23,17 +23,19 @@ function loadEnv(): void {
 }
 
 function getScheduleConfig(): ScheduleConfig {
-  const timezone = process.env.TIMEZONE || 'America/Los_Angeles';
+  const timezone = process.env.TIMEZONE || 'Asia/Tokyo';
 
+  // PRD 5.2: 7 段拟人化调度，模拟真人作息
   return {
     timezone,
     schedule: [
-      {
-        timeRange: '09:00-22:00',
-        intervalMin: 60,
-        intervalMax: 180,
-        active: true,
-      },
+      { timeRange: '07:00-09:00', intervalMin: 30, intervalMax: 60,  active: true },  // 早晨：起床浏览
+      { timeRange: '09:00-12:00', intervalMin: 60, intervalMax: 90,  active: true },  // 上午：工作状态
+      { timeRange: '12:00-14:00', intervalMin: 45, intervalMax: 60,  active: true },  // 午间：较活跃
+      { timeRange: '14:00-18:00', intervalMin: 60, intervalMax: 120, active: true },  // 下午：低频
+      { timeRange: '18:00-22:00', intervalMin: 30, intervalMax: 60,  active: true },  // 晚间：最活跃
+      { timeRange: '22:00-01:00', intervalMin: 60, intervalMax: 120, active: true },  // 深夜：随意浏览
+      { timeRange: '01:00-07:00', intervalMin: 0,  intervalMax: 0,   active: false }, // 睡眠：不唤醒
     ],
   };
 }

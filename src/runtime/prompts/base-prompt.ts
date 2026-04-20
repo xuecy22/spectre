@@ -10,8 +10,8 @@
  * 参考 PRD 4.2.1 节 - Prompt 组装
  */
 
-import { wakeCycleInstructions } from './wake-cycle.js';
-import type { LastWakeOutput } from './output-schema.js';
+import { wakeCycleInstructions } from './wake-cycle';
+import type { LastWakeOutput } from './output-schema';
 
 export interface PromptContext {
   persona: string;

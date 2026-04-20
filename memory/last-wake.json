@@ -1,13 +1,20 @@
 {
-  "wakeId": "wake-2026-04-20-1947",
-  "timestamp": "2026-04-20T11:47:25.521Z",
-  "timeOfDay": "morning",
-  "actions": [],
-  "observations": "",
-  "memoryUpdates": [],
+  "wakeId": "wake-2026-04-20-1953",
+  "timestamp": "2026-04-20T14:00:00Z",
+  "timeOfDay": "afternoon",
+  "actions": [
+    {
+      "type": "post",
+      "summary": "Test post"
+    }
+  ],
+  "observations": "Test observations",
+  "memoryUpdates": [
+    "strategy.md"
+  ],
   "pendingItems": "",
   "metrics": {
-    "newFollowers": 0,
-    "totalFollowers": 0
+    "newFollowers": 5,
+    "totalFollowers": 200
   }
 }

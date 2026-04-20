@@ -1,5 +1,7 @@
-import { readFileSync, existsSync } from 'fs';
-import { join } from 'path';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { buildSystemPrompt, type PromptContext as BasePromptContext } from './prompts/base-prompt';
+import type { LastWakeOutput } from './prompts/output-schema';
 
 export interface PromptContext {
   wakeId: string;
@@ -24,6 +26,12 @@ export function loadStrategy(): string | null {
   return readFileSync(path, 'utf-8');
 }
 
+export function loadLearnings(): string | null {
+  const path = join(process.cwd(), 'memory', 'learnings.md');
+  if (!existsSync(path)) return null;
+  return readFileSync(path, 'utf-8');
+}
+
 export function loadLastWake(): Record<string, unknown> | null {
   const path = join(process.cwd(), 'memory', 'last-wake.json');
   if (!existsSync(path)) return null;
@@ -34,81 +42,64 @@ export function loadLastWake(): Record<string, unknown> | null {
   }
 }
 
+/**
+ * 组装 system prompt，委托给 base-prompt.ts 的 buildSystemPrompt
+ * 参考 PRD 4.2.1 - Prompt 组装
+ */
 export function assembleSystemPrompt(context: PromptContext): string {
-  const { wakeId, timestamp, lastWake, persona, strategy, learnings } = context;
+  const timezone = process.env.TIMEZONE || 'Asia/Tokyo';
 
-  const sections: string[] = [];
+  // 将 lastWake 数据转换为 base-prompt 期望的类型
+  const lastWake = context.lastWake ? parseLastWake(context.lastWake) : undefined;
 
-  // Header
-  sections.push(`# Spectre Wake Cycle: ${wakeId}`);
-  sections.push(`Timestamp: ${timestamp.toISOString()}`);
-  sections.push('');
+  const baseContext: BasePromptContext = {
+    persona: context.persona || '(No persona defined)',
+    currentTime: context.timestamp,
+    timeZone: timezone,
+    lastWake,
+    workingDirectory: process.cwd(),
+  };
 
-  // Persona
-  if (persona) {
-    sections.push('## Persona');
-    sections.push(persona);
-    sections.push('');
+  let prompt = buildSystemPrompt(baseContext);
+
+  // 追加 strategy 和 learnings（base-prompt 未包含这些，但 PRD PREPARE 阶段要求注入）
+  if (context.strategy) {
+    prompt += `\n## 当前策略\n\n${context.strategy}\n`;
   }
 
-  // Strategy
-  if (strategy) {
-    sections.push('## Strategy');
-    sections.push(strategy);
-    sections.push('');
+  if (context.learnings) {
+    prompt += `\n## 经验洞察\n\n${context.learnings}\n`;
   }
 
-  // Learnings
-  if (learnings) {
-    sections.push('## Learnings');
-    sections.push(learnings);
-    sections.push('');
-  }
+  return prompt;
+}
 
-  // Last Wake Context
-  if (lastWake) {
-    sections.push('## Previous Wake Context');
-    sections.push(`Wake ID: ${lastWake.wakeId || 'unknown'}`);
-    if (lastWake.actions && Array.isArray(lastWake.actions)) {
-      sections.push('');
-      sections.push('Actions taken:');
-      for (const action of lastWake.actions) {
-        const actionObj = action as Record<string, unknown>;
-        sections.push(`- ${actionObj.type}: ${actionObj.summary || ''}`);
-      }
-    }
-    sections.push('');
-  }
+function parseLastWake(
+  data: Record<string, unknown>,
+): (LastWakeOutput & { wakeId: string; wakeLogPath?: string }) | undefined {
+  if (!data.wakeId) return undefined;
 
-  // Wake Cycle Instructions
-  sections.push('## Wake Cycle Instructions');
-  sections.push('');
-  sections.push('Execute the following phases in order:');
-  sections.push('');
-  sections.push('### SENSE');
-  sections.push('Gather information about the current state:');
-  sections.push('- Check X mentions and timeline');
-  sections.push('- Review recent engagement metrics');
-  sections.push('- Assess current context and time of day');
-  sections.push('');
-  sections.push('### THINK');
-  sections.push('Decide on actions based on gathered information:');
-  sections.push('- What content should be posted?');
-  sections.push('- Which mentions should be replied to?');
-  sections.push('- What interactions are worth pursuing?');
-  sections.push('');
-  sections.push('### ACT');
-  sections.push('Execute decided actions:');
-  sections.push('- Post content');
-  sections.push('- Reply to mentions');
-  sections.push('- Quote retweet or retweet');
-  sections.push('');
-  sections.push('### REFLECT');
-  sections.push('Review and update memory:');
-  sections.push('- Analyze engagement data');
-  sections.push('- Update strategy and learnings');
-  sections.push('- Write wake-log');
-  sections.push('');
-
-  return sections.join('\n');
+  return {
+    wakeId: String(data.wakeId),
+    wakeLogPath: data.wakeLogPath ? String(data.wakeLogPath) : undefined,
+    timestamp: String(data.timestamp ?? ''),
+    timeOfDay: (data.timeOfDay as LastWakeOutput['timeOfDay']) ?? 'morning',
+    actions: Array.isArray(data.actions)
+      ? data.actions.map((a: Record<string, unknown>) => ({
+          type: ((a.type as string) ?? 'skip') as LastWakeOutput['actions'][number]['type'],
+          summary: (a.summary as string) ?? '',
+          tweetId: a.tweetId as string | undefined,
+          to: a.to as string | undefined,
+        }))
+      : [],
+    observations: String(data.observations ?? ''),
+    memoryUpdates: Array.isArray(data.memoryUpdates)
+      ? data.memoryUpdates.map(String)
+      : [],
+    pendingItems: String(data.pendingItems ?? ''),
+    metrics: {
+      newFollowers: Number((data.metrics as Record<string, unknown>)?.newFollowers ?? 0),
+      totalFollowers: Number((data.metrics as Record<string, unknown>)?.totalFollowers ?? 0),
+    },
+  };
 }

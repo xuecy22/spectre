@@ -4,6 +4,7 @@ import {
   type PromptContext,
   loadPersona,
   loadStrategy,
+  loadLearnings,
   loadLastWake,
   assembleSystemPrompt,
 } from './prompt-builder';
@@ -48,6 +49,7 @@ async function prepare(): Promise<PromptContext> {
 
   const persona = loadPersona();
   const strategy = loadStrategy();
+  const learnings = loadLearnings();
   const lastWake = loadLastWake();
 
   return {
@@ -55,6 +57,7 @@ async function prepare(): Promise<PromptContext> {
     timestamp,
     persona: persona ?? undefined,
     strategy: strategy ?? undefined,
+    learnings: learnings ?? undefined,
     lastWake,
     timeOfDay: getTimeOfDay(timestamp.getHours()),
   };
