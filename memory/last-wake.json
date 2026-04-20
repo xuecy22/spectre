@@ -1,9 +1,9 @@
 {
-  "wakeId": "wake-2026-04-20-1451",
-  "timestamp": "2026-04-20T06:51:19.047Z",
-  "timeOfDay": "afternoon",
+  "wakeId": "wake-2026-04-20-1946",
+  "timestamp": "2026-04-20T11:46:21.387Z",
+  "timeOfDay": "morning",
   "actions": [],
-  "observations": "Mock session completed successfully",
+  "observations": "Mock session",
   "memoryUpdates": [],
   "pendingItems": "",
   "metrics": {

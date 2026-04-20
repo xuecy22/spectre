@@ -1,4 +1,4 @@
-import { query, type Options, type SDKMessage } from '@anthropic-ai/claude-agent-sdk';
+import { query, type Options, type SDKMessage, type HookCallbackMatcher, type HookEvent } from '@anthropic-ai/claude-agent-sdk';
 
 export interface SessionOptions {
   prompt: string;
@@ -6,6 +6,12 @@ export interface SessionOptions {
   maxTurns?: number;
   allowedTools?: string[];
   systemPrompt?: string;
+  permissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'dontAsk' | 'auto';
+  outputFormat?: {
+    type: 'json_schema';
+    schema: Record<string, unknown>;
+  };
+  hooks?: Partial<Record<HookEvent, HookCallbackMatcher[]>>;
 }
 
 export interface SessionResult {
@@ -15,6 +21,7 @@ export interface SessionResult {
   error?: string;
   cost?: number;
   turns?: number;
+  structuredOutput?: unknown;
 }
 
 const DEFAULT_ALLOWED_TOOLS = [
@@ -35,17 +42,35 @@ export async function runSession(options: SessionOptions): Promise<SessionResult
           is_error: false,
           total_cost_usd: 0.05,
           num_turns: 3,
+          structured_output: {
+            timestamp: new Date().toISOString(),
+            timeOfDay: 'morning',
+            actions: [],
+            observations: 'Mock session',
+            memoryUpdates: [],
+            pendingItems: '',
+            metrics: { newFollowers: 0, totalFollowers: 0 },
+          },
         } as SDKMessage,
       ],
       cost: 0.05,
       turns: 3,
+      structuredOutput: {
+        timestamp: new Date().toISOString(),
+        timeOfDay: 'morning',
+        actions: [],
+        observations: 'Mock session',
+        memoryUpdates: [],
+        pendingItems: '',
+        metrics: { newFollowers: 0, totalFollowers: 0 },
+      },
     };
   }
 
   const queryOptions: Options = {
     maxTurns: options.maxTurns ?? 30,
     allowedTools: options.allowedTools ?? DEFAULT_ALLOWED_TOOLS,
-    permissionMode: 'acceptEdits' as const,
+    permissionMode: options.permissionMode ?? 'bypassPermissions',
   };
 
   if (options.workingDirectory) {
@@ -54,6 +79,14 @@ export async function runSession(options: SessionOptions): Promise<SessionResult
 
   if (options.systemPrompt) {
     queryOptions.systemPrompt = options.systemPrompt;
+  }
+
+  if (options.outputFormat) {
+    queryOptions.outputFormat = options.outputFormat;
+  }
+
+  if (options.hooks) {
+    queryOptions.hooks = options.hooks;
   }
 
   try {
@@ -76,6 +109,7 @@ export async function runSession(options: SessionOptions): Promise<SessionResult
         messages,
         cost: resultMsg.total_cost_usd,
         turns: resultMsg.num_turns,
+        structuredOutput: 'structured_output' in resultMsg ? resultMsg.structured_output : undefined,
       };
     }
 

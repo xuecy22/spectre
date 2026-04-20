@@ -10,8 +10,10 @@ import {
 import { writeLastWake, findWakeLogByTimestamp, archiveSession } from './memory';
 import { checkPersonaIntegrity } from './safety';
 import { saveWakeRecord } from './db';
+import { lastWakeSchema, type LastWakeOutput } from './prompts/output-schema';
 import { join } from 'node:path';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readdirSync, existsSync } from 'node:fs';
+import type { HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
 
 const MAX_RETRIES = 2;
 
@@ -58,6 +60,38 @@ async function prepare(): Promise<PromptContext> {
   };
 }
 
+// --- Stop Hook: ensure wake-log is written before session ends ---
+
+function ensureWakeLogHook(wakeId: string): HookCallbackMatcher {
+  // 从 wakeId "wake-2026-04-20-2130" 提取时间前缀 "2026-04-20_2130"
+  const match = wakeId.match(/wake-(\d{4}-\d{2}-\d{2})-(\d{4})/);
+  const prefix = match ? `${match[1]}_${match[2]}` : '';
+
+  return {
+    hooks: [
+      async () => {
+        const wakeLogsDir = join(process.cwd(), 'memory', 'wake-logs');
+        if (!existsSync(wakeLogsDir)) {
+          return {
+            decision: 'block' as const,
+            systemMessage: '你还没有写 wake-log。请现在写入 memory/wake-logs/ 再结束。',
+          };
+        }
+        const files = readdirSync(wakeLogsDir);
+        const hasWakeLog = files.some(f => f.startsWith(prefix) && f.endsWith('.md'));
+
+        if (!hasWakeLog) {
+          return {
+            decision: 'block' as const,
+            systemMessage: '你还没有写 wake-log。请现在写入 memory/wake-logs/ 再结束。',
+          };
+        }
+        return { decision: 'approve' as const };
+      },
+    ],
+  };
+}
+
 // --- LAUNCH ---
 
 async function launch(context: PromptContext): Promise<SessionResult> {
@@ -67,7 +101,15 @@ async function launch(context: PromptContext): Promise<SessionResult> {
     prompt: `Execute wake cycle ${context.wakeId}. Follow the wake cycle instructions in the system prompt.`,
     systemPrompt,
     maxTurns: 15,
+    permissionMode: 'bypassPermissions',
     allowedTools: ['Read', 'Edit', 'Write', 'Bash', 'WebSearch', 'WebFetch', 'Glob', 'Grep'],
+    outputFormat: {
+      type: 'json_schema',
+      schema: lastWakeSchema as unknown as Record<string, unknown>,
+    },
+    hooks: {
+      Stop: [ensureWakeLogHook(context.wakeId)],
+    },
   });
 
   return result;
@@ -89,16 +131,18 @@ async function cleanup(context: PromptContext, result: SessionResult): Promise<v
     turns: result.turns,
   });
 
-  // Write last-wake.json from session output
+  // Write last-wake.json from SDK structured output (PRD 4.2.3)
+  const structuredOutput = result.structuredOutput as Partial<LastWakeOutput> | undefined;
   const lastWakeData: Record<string, unknown> = {
     wakeId,
-    timestamp: context.timestamp.toISOString(),
-    timeOfDay: context.timeOfDay,
-    actions: [],
-    observations: result.output || '',
-    memoryUpdates: [],
-    pendingItems: '',
-    metrics: { newFollowers: 0, totalFollowers: 0 },
+    wakeLogPath: wakeLogPath ? wakeLogPath.replace(`${process.cwd()}/`, '') : undefined,
+    timestamp: structuredOutput?.timestamp ?? context.timestamp.toISOString(),
+    timeOfDay: structuredOutput?.timeOfDay ?? context.timeOfDay,
+    actions: structuredOutput?.actions ?? [],
+    observations: structuredOutput?.observations ?? result.output ?? '',
+    memoryUpdates: structuredOutput?.memoryUpdates ?? [],
+    pendingItems: structuredOutput?.pendingItems ?? '',
+    metrics: structuredOutput?.metrics ?? { newFollowers: 0, totalFollowers: 0 },
   };
   writeLastWake(lastWakeData);
 
@@ -131,13 +175,16 @@ async function cleanup(context: PromptContext, result: SessionResult): Promise<v
   // Save wake record to DB
   if (process.env.MOCK_MODE !== 'true') {
     try {
+      const actionSummaries = (structuredOutput?.actions ?? []).map(
+        (a) => `${a.type}: ${a.summary}`
+      );
       saveWakeRecord({
         wakeId,
         timestamp: context.timestamp.toISOString(),
         duration: result.turns,
         cost: result.cost,
         turns: result.turns,
-        actions: [],
+        actions: actionSummaries,
       });
     } catch {
       // DB write is best-effort
