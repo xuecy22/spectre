@@ -25,7 +25,37 @@ Spectre 是一个自我进化的 AI agent，自主运营 X/Twitter 账号。
 - 测试文件与源文件结构对应
 - 测试文件命名：`*.test.ts`
 
-## PRD 关键概念
+## 文档结构
+
+项目文档在 `docs/` 下，与代码结构一一对应：
+
+```
+docs/
+├── vision.md                 # 愿景、原则、人设、成功指标
+├── architecture.md           # 双循环设计、自进化哲学、技术栈、模块总览
+├── core/
+│   ├── session-runner.md     # Agent SDK wrapper
+│   └── git.md                # Git 操作、good commit
+├── runtime/
+│   ├── orchestrator.md       # Wake cycle 生命周期
+│   ├── scheduler.md          # 拟人化调度
+│   ├── prompt-builder.md     # Prompt 组装
+│   ├── safety.md             # 人设保护、自愈、硬限制
+│   ├── memory.md             # 三层记忆架构
+│   ├── drives.md             # 内驱力系统
+│   ├── db.md                 # SQLite schema
+│   ├── logger.md             # 日志规范
+│   ├── cli.md                # CLI 命令
+│   ├── report.md             # 进化报告生成
+│   └── prompts/
+│       └── wake-cycle.md     # System prompt、输出 schema
+└── scripts/
+    └── tools.md              # X API 脚本、图片生成
+```
+
+修改代码时，同步更新对应的 docs spec。
+
+## 关键概念
 
 - **Wake cycle**：一次完整的唤醒周期（SENSE → THINK → ACT → REFLECT）
 - **Memory 三层**：Live Memory + Wake-Log + Session Archive
