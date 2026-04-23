@@ -71,4 +71,50 @@ describe('Prompt Builder', () => {
 
     expect(() => assembleSystemPrompt(context)).not.toThrow();
   });
+
+  it('should inject drives <internal-state> block when drivesDescription provided', () => {
+    const context: PromptContext = {
+      wakeId: 'wake-2026-04-20-1400',
+      timestamp: new Date('2026-04-20T14:00:00Z'),
+      drivesDescription: '<internal-state>\n创作能量: 高 (0.70)\n</internal-state>',
+    };
+
+    const prompt = assembleSystemPrompt(context);
+
+    expect(prompt).toContain('<internal-state>');
+    expect(prompt).toContain('创作能量');
+    expect(prompt).toContain('</internal-state>');
+  });
+
+  it('should inject engagement <environment-feedback> block when trend provided', () => {
+    const context: PromptContext = {
+      wakeId: 'wake-2026-04-20-1400',
+      timestamp: new Date('2026-04-20T14:00:00Z'),
+      engagementTrend: {
+        dailyStats: [
+          { date: '2026-04-19', posts: 3, avgLikes: 10, avgReplies: 2, avgRetweets: 1, followerDelta: 5 },
+          { date: '2026-04-20', posts: 2, avgLikes: 15, avgReplies: 3, avgRetweets: 2, followerDelta: 3 },
+        ],
+      },
+    };
+
+    const prompt = assembleSystemPrompt(context);
+
+    expect(prompt).toContain('<environment-feedback>');
+    expect(prompt).toContain('</environment-feedback>');
+    expect(prompt).toContain('总发帖');
+    expect(prompt).toContain('粉丝变化');
+  });
+
+  it('should not inject engagement block when trend is empty', () => {
+    const context: PromptContext = {
+      wakeId: 'wake-2026-04-20-1400',
+      timestamp: new Date('2026-04-20T14:00:00Z'),
+      engagementTrend: { dailyStats: [] },
+    };
+
+    const prompt = assembleSystemPrompt(context);
+
+    expect(prompt).not.toContain('<environment-feedback>');
+  });
 });

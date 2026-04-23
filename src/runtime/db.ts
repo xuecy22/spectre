@@ -57,7 +57,17 @@ function getDB(): Database.Database {
   return db;
 }
 
+export function closeDB(): void {
+  if (db) {
+    db.close();
+    db = null;
+  }
+}
+
 export function initDB(path?: string): void {
+  // If already initialized with a connection, reuse it
+  if (db) return;
+
   const dbPath = resolve(path ?? DEFAULT_DB_PATH);
   mkdirSync(dirname(dbPath), { recursive: true });
 
@@ -100,6 +110,26 @@ export function initDB(path?: string): void {
       follower_delta INTEGER DEFAULT 0,
       measured_at TEXT NOT NULL,
       FOREIGN KEY (post_id) REFERENCES posts(post_id)
+    )
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS wake_snapshots (
+      wake_id          TEXT PRIMARY KEY,
+      timestamp        TEXT NOT NULL,
+      time_of_day      TEXT NOT NULL,
+      creative_energy  REAL NOT NULL,
+      social_hunger    REAL NOT NULL,
+      curiosity        REAL NOT NULL,
+      confidence       REAL NOT NULL,
+      actions          TEXT NOT NULL,
+      memory_updates   TEXT,
+      observations     TEXT,
+      pending_items    TEXT,
+      new_followers    INTEGER DEFAULT 0,
+      total_followers  INTEGER DEFAULT 0,
+      cost_usd         REAL,
+      turns            INTEGER
     )
   `);
 
@@ -288,6 +318,140 @@ export function getEngagementSummary(days = 7): {
     avgReplies: Math.round(row.avg_replies * 10) / 10,
     avgRetweets: Math.round(row.avg_retweets * 10) / 10,
     totalFollowerDelta: row.total_follower_delta,
+  };
+}
+
+// --- Wake snapshots (PRD docs/runtime/db.md) ---
+
+export interface WakeSnapshot {
+  wakeId: string;
+  timestamp: string;
+  timeOfDay: string;
+  creativeEnergy: number;
+  socialHunger: number;
+  curiosity: number;
+  confidence: number;
+  actions: string; // JSON
+  memoryUpdates?: string; // JSON
+  observations?: string;
+  pendingItems?: string;
+  newFollowers: number;
+  totalFollowers: number;
+  costUsd?: number;
+  turns?: number;
+}
+
+export function saveWakeSnapshot(snapshot: WakeSnapshot): void {
+  const stmt = getDB().prepare(`
+    INSERT OR REPLACE INTO wake_snapshots (
+      wake_id, timestamp, time_of_day,
+      creative_energy, social_hunger, curiosity, confidence,
+      actions, memory_updates, observations, pending_items,
+      new_followers, total_followers, cost_usd, turns
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `);
+  stmt.run(
+    snapshot.wakeId,
+    snapshot.timestamp,
+    snapshot.timeOfDay,
+    snapshot.creativeEnergy,
+    snapshot.socialHunger,
+    snapshot.curiosity,
+    snapshot.confidence,
+    snapshot.actions,
+    snapshot.memoryUpdates ?? null,
+    snapshot.observations ?? null,
+    snapshot.pendingItems ?? null,
+    snapshot.newFollowers,
+    snapshot.totalFollowers,
+    snapshot.costUsd ?? null,
+    snapshot.turns ?? null,
+  );
+}
+
+export function getWakeSnapshots(days = 30): WakeSnapshot[] {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const rows = getDB()
+    .prepare('SELECT * FROM wake_snapshots WHERE timestamp >= ? ORDER BY timestamp ASC')
+    .all(since) as Array<{
+    wake_id: string;
+    timestamp: string;
+    time_of_day: string;
+    creative_energy: number;
+    social_hunger: number;
+    curiosity: number;
+    confidence: number;
+    actions: string;
+    memory_updates: string | null;
+    observations: string | null;
+    pending_items: string | null;
+    new_followers: number;
+    total_followers: number;
+    cost_usd: number | null;
+    turns: number | null;
+  }>;
+
+  return rows.map((row) => ({
+    wakeId: row.wake_id,
+    timestamp: row.timestamp,
+    timeOfDay: row.time_of_day,
+    creativeEnergy: row.creative_energy,
+    socialHunger: row.social_hunger,
+    curiosity: row.curiosity,
+    confidence: row.confidence,
+    actions: row.actions,
+    memoryUpdates: row.memory_updates ?? undefined,
+    observations: row.observations ?? undefined,
+    pendingItems: row.pending_items ?? undefined,
+    newFollowers: row.new_followers,
+    totalFollowers: row.total_followers,
+    costUsd: row.cost_usd ?? undefined,
+    turns: row.turns ?? undefined,
+  }));
+}
+
+export function getEngagementTrend(days = 7): {
+  dailyStats: Array<{
+    date: string;
+    posts: number;
+    avgLikes: number;
+    avgReplies: number;
+    avgRetweets: number;
+    followerDelta: number;
+  }>;
+} {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  const rows = getDB().prepare(`
+    SELECT
+      DATE(p.posted_at) as date,
+      COUNT(p.post_id) as posts,
+      COALESCE(AVG(m.likes), 0) as avg_likes,
+      COALESCE(AVG(m.replies), 0) as avg_replies,
+      COALESCE(AVG(m.retweets), 0) as avg_retweets,
+      COALESCE(SUM(m.follower_delta), 0) as follower_delta
+    FROM posts p
+    LEFT JOIN metrics m ON p.post_id = m.post_id
+    WHERE p.posted_at >= ?
+    GROUP BY DATE(p.posted_at)
+    ORDER BY date ASC
+  `).all(since) as Array<{
+    date: string;
+    posts: number;
+    avg_likes: number;
+    avg_replies: number;
+    avg_retweets: number;
+    follower_delta: number;
+  }>;
+
+  return {
+    dailyStats: rows.map((row) => ({
+      date: row.date,
+      posts: row.posts,
+      avgLikes: Math.round(row.avg_likes * 10) / 10,
+      avgReplies: Math.round(row.avg_replies * 10) / 10,
+      avgRetweets: Math.round(row.avg_retweets * 10) / 10,
+      followerDelta: row.follower_delta,
+    })),
   };
 }
 

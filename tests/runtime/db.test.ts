@@ -1,22 +1,30 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  initDB,
+  initDB, closeDB,
   saveWakeRecord, getRecentWakes, getTotalCost,
   savePost, getRecentPosts,
   saveMetrics, getMetricsForPost, getEngagementSummary,
   saveInteraction, getRecentInteractions,
+  saveWakeSnapshot, getWakeSnapshots, getEngagementTrend,
   type WakeRecord, type PostRecord, type MetricsRecord, type InteractionRecord,
 } from '../../src/runtime/db';
 import { unlinkSync, existsSync } from 'node:fs';
+import { afterEach } from 'vitest';
 
 describe('DB', () => {
   const testDbPath = 'data/test-spectre.db';
 
   beforeEach(() => {
-    if (existsSync(testDbPath)) {
-      unlinkSync(testDbPath);
+    closeDB();
+    for (const suffix of ['', '-shm', '-wal']) {
+      const p = testDbPath + suffix;
+      if (existsSync(p)) unlinkSync(p);
     }
     initDB();
+  });
+
+  afterEach(() => {
+    closeDB();
   });
 
   it('should initialize database with all tables', () => {
@@ -128,6 +136,54 @@ describe('DB', () => {
     expect(summary.avgLikes).toBe(15);
     expect(summary.avgReplies).toBe(5);
     expect(summary.totalFollowerDelta).toBe(8);
+  });
+
+  // --- Wake Snapshots ---
+
+  it('should save and retrieve wake snapshots', () => {
+    saveWakeSnapshot({
+      wakeId: 'wake-2026-04-20-1200',
+      timestamp: new Date().toISOString(),
+      timeOfDay: 'noon',
+      creativeEnergy: 0.7,
+      socialHunger: 0.4,
+      curiosity: 0.3,
+      confidence: 0.8,
+      actions: JSON.stringify([{ type: 'post', summary: 'test' }]),
+      memoryUpdates: JSON.stringify(['strategy.md']),
+      observations: 'Test observation',
+      newFollowers: 5,
+      totalFollowers: 100,
+      costUsd: 0.15,
+      turns: 8,
+    });
+
+    const snapshots = getWakeSnapshots(1);
+    expect(snapshots).toHaveLength(1);
+    expect(snapshots[0].wakeId).toBe('wake-2026-04-20-1200');
+    expect(snapshots[0].creativeEnergy).toBe(0.7);
+    expect(snapshots[0].confidence).toBe(0.8);
+    expect(snapshots[0].totalFollowers).toBe(100);
+    expect(snapshots[0].observations).toBe('Test observation');
+  });
+
+  it('should return engagement trend by day', () => {
+    saveWakeRecord({ wakeId: 'wake-1', timestamp: new Date().toISOString() });
+    savePost({
+      postId: 'p1', wakeId: 'wake-1', type: 'original',
+      content: 'test', hasImage: false, postedAt: new Date().toISOString(),
+    });
+    saveMetrics({
+      postId: 'p1', likes: 10, retweets: 2, replies: 4,
+      impressions: 500, profileVisits: 5, followerDelta: 3,
+      measuredAt: new Date().toISOString(),
+    });
+
+    const trend = getEngagementTrend(1);
+    expect(trend.dailyStats).toHaveLength(1);
+    expect(trend.dailyStats[0].posts).toBe(1);
+    expect(trend.dailyStats[0].avgLikes).toBe(10);
+    expect(trend.dailyStats[0].followerDelta).toBe(3);
   });
 
   // --- Interactions ---

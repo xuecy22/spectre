@@ -12,13 +12,16 @@ import {
 } from './prompt-builder';
 import { writeLastWake, findWakeLogByTimestamp, archiveSession } from './memory';
 import { checkPersonaIntegrity, snapshotPersona, autoHeal } from './safety';
-import { saveWakeRecord } from './db';
+import { initDB, saveWakeRecord, saveWakeSnapshot, getEngagementSummary, getEngagementTrend } from './db';
 import { lastWakeSchema, type LastWakeOutput } from './prompts/output-schema';
+import { calculateDrives, describeDrives, type Drives } from './drives';
+import { createLogger } from './logger';
 import { join } from 'node:path';
 import { appendFileSync, readdirSync, existsSync } from 'node:fs';
 import type { HookCallbackMatcher } from '@anthropic-ai/claude-agent-sdk';
 
 const MAX_RETRIES = 2;
+const log = createLogger('orchestrator');
 
 export interface WakeCyclePhases {
   PREPARE: () => Promise<PromptContext>;
@@ -45,9 +48,19 @@ function getTimeOfDay(hour: number): string {
 
 // --- PREPARE ---
 
-async function prepare(): Promise<PromptContext> {
+async function prepare(): Promise<PromptContext & { drives: Drives }> {
   const wakeId = generateWakeId();
   const timestamp = new Date();
+  log.info('PREPARE started', { wakeId });
+
+  // Mark current HEAD as good commit (docs/runtime/orchestrator.md: PREPARE 成功 = 当前代码可用)
+  if (process.env.MOCK_MODE !== 'true') {
+    try {
+      markAsGoodCommit();
+    } catch {
+      // best-effort
+    }
+  }
 
   const persona = loadPersona();
   const strategy = loadStrategy();
@@ -60,6 +73,39 @@ async function prepare(): Promise<PromptContext> {
   const personaPath = join(process.cwd(), 'memory', 'persona.md');
   const personaSnapshot = snapshotPersona(personaPath);
 
+  // Calculate drives (docs/runtime/drives.md)
+  let engagement = null;
+  let engagementTrend = undefined;
+  if (process.env.MOCK_MODE !== 'true') {
+    try {
+      initDB();
+      engagement = getEngagementSummary(7);
+      engagementTrend = getEngagementTrend(7);
+    } catch {
+      // DB read is best-effort
+    }
+  }
+
+  const lastWakeContext = lastWake ? {
+    actions: lastWake.actions as Array<{ type: string; summary: string }> | undefined,
+    observations: lastWake.observations as string | undefined,
+    metrics: lastWake.metrics as { newFollowers: number; totalFollowers: number } | undefined,
+    drives: lastWake.drives as Drives | undefined,
+  } : null;
+
+  const drives = calculateDrives(lastWakeContext, engagement);
+  const drivesDescription = describeDrives(drives);
+
+  log.info('PREPARE completed', {
+    wakeId,
+    drives: {
+      creative_energy: drives.creative_energy.toFixed(2),
+      social_hunger: drives.social_hunger.toFixed(2),
+      curiosity: drives.curiosity.toFixed(2),
+      confidence: drives.confidence.toFixed(2),
+    },
+  });
+
   return {
     wakeId,
     timestamp,
@@ -71,6 +117,9 @@ async function prepare(): Promise<PromptContext> {
     lastWake,
     timeOfDay: getTimeOfDay(timestamp.getHours()),
     personaSnapshot,
+    drives,
+    drivesDescription,
+    engagementTrend,
   };
 }
 
@@ -109,6 +158,7 @@ function ensureWakeLogHook(wakeId: string): HookCallbackMatcher {
 // --- LAUNCH ---
 
 async function launch(context: PromptContext): Promise<SessionResult> {
+  log.info('LAUNCH started', { wakeId: context.wakeId });
   const systemPrompt = assembleSystemPrompt(context);
 
   const result = await runSession({
@@ -126,14 +176,16 @@ async function launch(context: PromptContext): Promise<SessionResult> {
     },
   });
 
+  log.info('LAUNCH completed', { wakeId: context.wakeId, success: result.success, turns: result.turns, cost: result.cost });
   return result;
 }
 
 // --- CLEANUP ---
 
-async function cleanup(context: PromptContext, result: SessionResult): Promise<void> {
-  const { wakeId } = context;
+async function cleanup(context: PromptContext & { drives: Drives }, result: SessionResult): Promise<void> {
+  const { wakeId, drives } = context;
   const messages = result.messages ?? [];
+  log.info('CLEANUP started', { wakeId });
 
   // Archive session
   const wakeLogPath = findWakeLogByTimestamp(wakeId);
@@ -157,6 +209,7 @@ async function cleanup(context: PromptContext, result: SessionResult): Promise<v
     memoryUpdates: structuredOutput?.memoryUpdates ?? [],
     pendingItems: structuredOutput?.pendingItems ?? '',
     metrics: structuredOutput?.metrics ?? { newFollowers: 0, totalFollowers: 0 },
+    drives,
   };
   writeLastWake(lastWakeData);
 
@@ -169,7 +222,7 @@ async function cleanup(context: PromptContext, result: SessionResult): Promise<v
   const personaPath = join(process.cwd(), 'memory', 'persona.md');
   const integrityCheck = checkPersonaIntegrity(personaPath, context.personaSnapshot);
   if (!integrityCheck.passed) {
-    console.warn(`Persona integrity violations: ${integrityCheck.violations.join(', ')}`);
+    log.warn('Persona integrity violations', { violations: integrityCheck.violations });
   }
 
   // Git commit all changes
@@ -196,6 +249,7 @@ async function cleanup(context: PromptContext, result: SessionResult): Promise<v
   // Save wake record to DB
   if (process.env.MOCK_MODE !== 'true') {
     try {
+      initDB();
       const actionSummaries = (structuredOutput?.actions ?? []).map(
         (a) => `${a.type}: ${a.summary}`
       );
@@ -207,10 +261,33 @@ async function cleanup(context: PromptContext, result: SessionResult): Promise<v
         turns: result.turns,
         actions: actionSummaries,
       });
+
+      // Save wake snapshot with drives (docs/runtime/db.md)
+      saveWakeSnapshot({
+        wakeId,
+        timestamp: context.timestamp.toISOString(),
+        timeOfDay: context.timeOfDay ?? getTimeOfDay(context.timestamp.getHours()),
+        creativeEnergy: drives.creative_energy,
+        socialHunger: drives.social_hunger,
+        curiosity: drives.curiosity,
+        confidence: drives.confidence,
+        actions: JSON.stringify(structuredOutput?.actions ?? []),
+        memoryUpdates: structuredOutput?.memoryUpdates
+          ? JSON.stringify(structuredOutput.memoryUpdates)
+          : undefined,
+        observations: structuredOutput?.observations ?? undefined,
+        pendingItems: structuredOutput?.pendingItems ?? undefined,
+        newFollowers: structuredOutput?.metrics?.newFollowers ?? 0,
+        totalFollowers: structuredOutput?.metrics?.totalFollowers ?? 0,
+        costUsd: result.cost,
+        turns: result.turns,
+      });
     } catch {
       // DB write is best-effort
     }
   }
+
+  log.info('CLEANUP completed', { wakeId, cost: result.cost, turns: result.turns });
 }
 
 // --- Main entry point ---
@@ -237,13 +314,11 @@ export async function runWakeCycle(): Promise<void> {
         if (process.env.MOCK_MODE !== 'true') {
           const revertedFiles = autoHeal();
           if (revertedFiles.length > 0) {
-            console.warn(
-              `Auto-heal: reverted infrastructure files: ${revertedFiles.join(', ')}`,
-            );
+            log.warn('Auto-heal: reverted infrastructure files', { files: revertedFiles });
           }
         }
 
-        console.warn(`Wake cycle attempt ${attempt + 1} failed, retrying: ${lastError.message}`);
+        log.warn(`Wake cycle attempt ${attempt + 1} failed, retrying`, { error: lastError.message });
         continue;
       }
     }

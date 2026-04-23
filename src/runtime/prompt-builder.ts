@@ -2,6 +2,18 @@ import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildSystemPrompt, type PromptContext as BasePromptContext } from './prompts/base-prompt';
 import type { LastWakeOutput } from './prompts/output-schema';
+import type { Drives } from './drives';
+
+export interface EngagementTrend {
+  dailyStats: Array<{
+    date: string;
+    posts: number;
+    avgLikes: number;
+    avgReplies: number;
+    avgRetweets: number;
+    followerDelta: number;
+  }>;
+}
 
 export interface PromptContext {
   wakeId: string;
@@ -15,6 +27,9 @@ export interface PromptContext {
   metrics?: Record<string, unknown>;
   timeOfDay?: string;
   personaSnapshot?: Record<string, string> | null;
+  drives?: Drives;
+  drivesDescription?: string;
+  engagementTrend?: EngagementTrend;
 }
 
 export function loadPersona(): string | null {
@@ -94,7 +109,40 @@ export function assembleSystemPrompt(context: PromptContext): string {
     prompt += `\n## 调度配置\n\n${context.scheduleConfig}\n`;
   }
 
+  // 注入 drives 的 <internal-state> 块（docs/runtime/drives.md）
+  if (context.drivesDescription) {
+    prompt += `\n${context.drivesDescription}\n`;
+  }
+
+  // 注入 engagement 趋势的 <environment-feedback> 块（docs/runtime/prompt-builder.md）
+  if (context.engagementTrend && context.engagementTrend.dailyStats.length > 0) {
+    prompt += `\n${formatEngagementFeedback(context.engagementTrend)}\n`;
+  }
+
   return prompt;
+}
+
+function formatEngagementFeedback(trend: EngagementTrend): string {
+  const stats = trend.dailyStats;
+  const totalPosts = stats.reduce((sum, d) => sum + d.posts, 0);
+  const totalFollowerDelta = stats.reduce((sum, d) => sum + d.followerDelta, 0);
+  const avgLikes = stats.length > 0
+    ? Math.round(stats.reduce((sum, d) => sum + d.avgLikes, 0) / stats.length * 10) / 10
+    : 0;
+
+  const recentDays = stats.slice(-3).map(d =>
+    `  - ${d.date}: ${d.posts} 条帖子, 均 ${d.avgLikes} 赞, follower ${d.followerDelta >= 0 ? '+' : ''}${d.followerDelta}`
+  ).join('\n');
+
+  return `<environment-feedback>
+最近 ${stats.length} 天的表现数据：
+- 总发帖: ${totalPosts} 条
+- 日均赞数: ${avgLikes}
+- 粉丝变化: ${totalFollowerDelta >= 0 ? '+' : ''}${totalFollowerDelta}
+
+近期趋势：
+${recentDays}
+</environment-feedback>`;
 }
 
 function parseLastWake(

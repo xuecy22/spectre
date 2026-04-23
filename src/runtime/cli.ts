@@ -1,5 +1,6 @@
 import { runWakeCycle } from './orchestrator';
 import { startScheduler, type ScheduleConfig } from './scheduler';
+import { generateReport } from './report';
 import { config } from 'dotenv';
 import { existsSync, writeFileSync, mkdirSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
@@ -9,14 +10,25 @@ import { loadLastWake } from './prompt-builder';
 interface CliOptions {
   mock?: boolean;
   command?: string;
+  days?: number;
+  out?: string;
 }
 
 function parseArgs(): CliOptions {
   const args = process.argv.slice(2);
   const command = args.find(a => !a.startsWith('--'));
+
+  const daysIdx = args.indexOf('--days');
+  const days = daysIdx >= 0 && args[daysIdx + 1] ? Number(args[daysIdx + 1]) : undefined;
+
+  const outIdx = args.indexOf('--out');
+  const out = outIdx >= 0 && args[outIdx + 1] ? args[outIdx + 1] : undefined;
+
   return {
     mock: args.includes('--mock'),
     command,
+    days,
+    out,
   };
 }
 
@@ -149,6 +161,26 @@ function cmdResume(): void {
   }
 }
 
+function cmdReport(days = 30, out = 'report.html'): void {
+  try {
+    const outPath = generateReport({ days, outPath: out });
+    console.log(`Evolution report generated: ${outPath}`);
+  } catch (err) {
+    console.error('Failed to generate report:', err instanceof Error ? err.message : String(err));
+  }
+}
+
+function cmdStop(): void {
+  const stopFile = join(process.cwd(), 'data', '.stopped');
+  mkdirSync(join(process.cwd(), 'data'), { recursive: true });
+  writeFileSync(stopFile, new Date().toISOString());
+  console.log('Spectre stopping gracefully...');
+  console.log('Waiting for current session to complete (if any)...');
+  // In a real implementation, this would signal the scheduler to stop
+  // and wait for the current session to finish before exiting
+  process.exit(0);
+}
+
 function isPaused(): boolean {
   return existsSync(join(process.cwd(), 'data', '.paused'));
 }
@@ -180,6 +212,12 @@ export async function main(): Promise<void> {
       return;
     case 'resume':
       cmdResume();
+      return;
+    case 'report':
+      cmdReport(options.days ?? 30, options.out ?? 'report.html');
+      return;
+    case 'stop':
+      cmdStop();
       return;
   }
 

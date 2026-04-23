@@ -23,7 +23,26 @@ vi.mock('../../src/runtime/memory', () => ({
 }));
 
 vi.mock('../../src/runtime/db', () => ({
+  initDB: vi.fn(),
   saveWakeRecord: vi.fn(),
+  saveWakeSnapshot: vi.fn(),
+  getEngagementSummary: vi.fn().mockReturnValue({
+    totalPosts: 5, avgLikes: 10, avgReplies: 2, avgRetweets: 3, totalFollowerDelta: 5,
+  }),
+  getEngagementTrend: vi.fn().mockReturnValue({ dailyStats: [] }),
+}));
+
+vi.mock('../../src/runtime/drives', () => ({
+  calculateDrives: vi.fn().mockReturnValue({
+    creative_energy: 0.5, social_hunger: 0.4, curiosity: 0.3, confidence: 0.5,
+  }),
+  describeDrives: vi.fn().mockReturnValue('<internal-state>\nTest drives\n</internal-state>'),
+}));
+
+vi.mock('../../src/runtime/logger', () => ({
+  createLogger: vi.fn().mockReturnValue({
+    debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn(),
+  }),
 }));
 
 vi.mock('../../src/runtime/safety', () => ({

@@ -7,6 +7,7 @@
 export interface LastWakeOutput {
   timestamp: string;
   timeOfDay: 'morning' | 'noon' | 'afternoon' | 'evening' | 'night';
+  wakeLogPath?: string;
   actions: Array<{
     type: 'post' | 'reply' | 'retweet' | 'quote' | 'skip';
     summary: string;
@@ -34,6 +35,10 @@ export const lastWakeSchema = {
       type: 'string',
       enum: ['morning', 'noon', 'afternoon', 'evening', 'night'],
       description: '当前时段'
+    },
+    wakeLogPath: {
+      type: 'string',
+      description: 'wake-log 文件路径（相对于 memory/）'
     },
     actions: {
       type: 'array',
