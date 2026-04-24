@@ -45,6 +45,11 @@ vi.mock('../../src/runtime/logger', () => ({
   }),
 }));
 
+vi.mock('../../src/runtime/doc-sync', () => ({
+  checkDocSync: vi.fn().mockReturnValue({ passed: true, missingDocs: [] }),
+  formatDocSyncMessage: vi.fn().mockReturnValue(''),
+}));
+
 vi.mock('../../src/runtime/safety', () => ({
   checkPersonaIntegrity: vi.fn().mockReturnValue({ passed: true, violations: [] }),
   snapshotPersona: vi.fn().mockReturnValue({ name: 'Kira', identity: 'Tokyo illustrator' }),

@@ -15,6 +15,7 @@ import { checkPersonaIntegrity, snapshotPersona, autoHeal } from './safety';
 import { initDB, saveWakeRecord, saveWakeSnapshot, getEngagementSummary, getEngagementTrend } from './db';
 import { lastWakeSchema, type LastWakeOutput } from './prompts/output-schema';
 import { calculateDrives, describeDrives, type Drives } from './drives';
+import { checkDocSync, formatDocSyncMessage } from './doc-sync';
 import { createLogger } from './logger';
 import { join } from 'node:path';
 import { appendFileSync, readdirSync, existsSync } from 'node:fs';
@@ -155,6 +156,25 @@ function ensureWakeLogHook(wakeId: string): HookCallbackMatcher {
   };
 }
 
+// --- Stop Hook: ensure docs are updated when src/ is modified ---
+
+function ensureDocSyncHook(): HookCallbackMatcher {
+  return {
+    hooks: [
+      async () => {
+        const result = checkDocSync();
+        if (!result.passed) {
+          return {
+            decision: 'block' as const,
+            systemMessage: formatDocSyncMessage(result),
+          };
+        }
+        return { decision: 'approve' as const };
+      },
+    ],
+  };
+}
+
 // --- LAUNCH ---
 
 async function launch(context: PromptContext): Promise<SessionResult> {
@@ -172,7 +192,7 @@ async function launch(context: PromptContext): Promise<SessionResult> {
       schema: lastWakeSchema as unknown as Record<string, unknown>,
     },
     hooks: {
-      Stop: [ensureWakeLogHook(context.wakeId)],
+      Stop: [ensureWakeLogHook(context.wakeId), ensureDocSyncHook()],
     },
   });
 
@@ -223,6 +243,22 @@ async function cleanup(context: PromptContext & { drives: Drives }, result: Sess
   const integrityCheck = checkPersonaIntegrity(personaPath, context.personaSnapshot);
   if (!integrityCheck.passed) {
     log.warn('Persona integrity violations', { violations: integrityCheck.violations });
+  }
+
+  // Check doc-sync: src/ changes should have corresponding docs/ changes
+  if (process.env.MOCK_MODE !== 'true') {
+    const docSyncResult = checkDocSync();
+    if (!docSyncResult.passed) {
+      const missing = docSyncResult.missingDocs.map(m => `${m.srcFile} → ${m.expectedDoc}`);
+      log.warn('Doc-sync violation: src/ modified without docs/ update', { missingDocs: missing });
+      // Record as pending item for next wake cycle
+      if (typeof lastWakeData.pendingItems === 'string' && lastWakeData.pendingItems) {
+        lastWakeData.pendingItems += `; Doc-sync: update ${missing.join(', ')}`;
+      } else {
+        lastWakeData.pendingItems = `Doc-sync: update ${missing.join(', ')}`;
+      }
+      writeLastWake(lastWakeData);
+    }
   }
 
   // Git commit all changes
